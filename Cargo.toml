@@ -3,6 +3,7 @@ name = "git2megaignore"
 description = "Convert a .gitignore file to a .megaignore file"
 keywords = ["gitignore", "git", "mega", "file", "pattern"]
 categories = ["command-line-utilities"]
+repository = "https://github.com/Farfi55/git2megaignore.git"
 authors = ["Alessio Farfaglia"]
 license = "MIT"
 version = "0.1.0"
