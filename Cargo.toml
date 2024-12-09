@@ -1,0 +1,13 @@
+[package]
+name = "git2megaignore"
+description = "Convert a .gitignore file to a .megaignore file"
+keywords = ["gitignore", "git", "mega", "file", "pattern"]
+categories = ["command-line-utilities"]
+authors = ["Alessio Farfaglia"]
+license = "MIT"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
