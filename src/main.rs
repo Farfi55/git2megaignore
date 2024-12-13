@@ -217,7 +217,7 @@
 // A slash followed by two consecutive asterisks then a slash matches zero or more directories. For example, "a/**/b" matches "a/b", "a/x/b", "a/x/y/b" and so on.
 
 // Other consecutive asterisks are considered regular asterisks and will match according to the previous rules.
-
+use std::error::Error;
 use std::fs::File;
 use std::io::{self, BufRead, Write};
 use std::path::Path;
@@ -231,34 +231,42 @@ where
 }
 
 #[derive(Debug)]
-struct GitIgnoreRule {
+struct IgnoreRule {
     /// The raw line from the .gitignore file
-    raw_line: String,
+    git_rule: String,
+
+    /// The rule in the .megaignore format
+    mega_rule: String,
 
     /// Whether the rule is an exclude or include rule
     /// default: exclude
     is_exclude: bool,
 
-    /// The pattern to match
-    pattern: String,
-
-    /// The pattern split into
-    parts: Vec<String>,
+    /// The glob pattern to match
+    glob_pattern: String,
 
     /// Whether the pattern is relative to the .gitignore file
     /// default: false
+    ///
+    /// If there is a separator at the beginning or middle (or both) of the pattern,
+    /// then the pattern is relative to the directory level of the particular .gitignore file itself.
+    ///
+    /// Otherwise the pattern may also match at any level below the .gitignore level.
     is_relative: bool,
 
-    /// The target of the rule
-    /// default: All
-    target: GitIgnoreRuleTarget,
+    /// Should the rule only apply to folders
+    /// default: false
+    folders_only: bool,
+
+    /// The strategy to use for the rule
+    /// default: Glob
+    strategy: MegaStrategy,
 }
 
 #[derive(Debug)]
-enum GitIgnoreRuleTarget {
-    All,
-    Folder,
-    File,
+enum MegaStrategy {
+    Glob,
+    Regexp,
 }
 
 fn skip_line(line: &str) -> bool {
@@ -266,72 +274,199 @@ fn skip_line(line: &str) -> bool {
     line.is_empty() || line.starts_with("#")
 }
 
-impl GitIgnoreRule {
+impl IgnoreRule {
     fn from_line(line: &str) -> Self {
         let line = line.trim();
         let mut is_exclude = true;
         let mut is_relative = false;
-        let mut target = GitIgnoreRuleTarget::All;
-        let mut pattern = String::new();
-        let mut parts = Vec::new();
+        let mut folders_only = false;
+        let mut glob_pattern: String;
 
+        // if the line starts with a ! then it is an include rule
         if line.starts_with("!") {
             is_exclude = false;
-            pattern = line[1..].to_string();
+            glob_pattern = line[1..].to_string();
         } else {
-            pattern = line.to_string();
+            glob_pattern = line.to_string();
         }
+        glob_pattern = glob_pattern.trim().to_string();
 
-        parts = pattern.split("/").map(|s| s.to_string()).collect();
-        parts.retain(|s| !s.is_empty());
+        let starts_at_root = glob_pattern.starts_with("/");
+        let has_multiple_parts = glob_pattern
+            .split('/')
+            .filter(|part| !part.is_empty())
+            .count()
+            > 1;
 
-        if pattern.starts_with("/") || parts.len() > 1 {
+        // if the pattern starts at the root or if it is a path i.e. foo/bar
+        // then it is relative to the .megaignore file
+        if starts_at_root || has_multiple_parts {
             is_relative = true;
+            if starts_at_root {
+                // remove the leading slash
+                glob_pattern.remove(0);
+            }
         }
 
-        if pattern.ends_with("/") {
-            target = GitIgnoreRuleTarget::Folder;
-            pattern.pop();
+        // if the pattern ends with a slash, then it is a folder
+        if glob_pattern.ends_with("/") {
+            folders_only = true;
+            // remove the trailing slash
+            glob_pattern.pop();
         }
 
-        Self {
-            raw_line: line.to_string(),
+        let strategy = if pattern_needs_regexp(&glob_pattern) {
+            MegaStrategy::Regexp
+        } else {
+            MegaStrategy::Glob
+        };
+
+        let mut rule = Self {
+            git_rule: line.to_string(),
+            mega_rule: String::new(),
             is_exclude,
-            pattern,
+            glob_pattern,
             is_relative,
-            target,
-            parts,
-        }
+            folders_only,
+            strategy,
+        };
+
+        rule.mega_rule = rule.to_megaignore();
+        rule
     }
 
     fn to_megaignore(&self) -> String {
-        let mut megaignore = String::new();
         let exclude = if self.is_exclude { "-" } else { "+" };
         let relative = if self.is_relative { "p" } else { "n" };
-        let target = match self.target {
-            GitIgnoreRuleTarget::All => "a",
-            GitIgnoreRuleTarget::Folder => "d",
-            GitIgnoreRuleTarget::File => "f",
-        };
+        let target = if self.folders_only { "d" } else { "a" };
+        let pattern: String;
+        let strategy: &str;
+        match self.strategy {
+            MegaStrategy::Glob => {
+                strategy = "G";
+                pattern = self.glob_pattern.clone();
+            }
+            MegaStrategy::Regexp => {
+                strategy = "R";
+                pattern = match glob_to_regex(&self.glob_pattern) {
+                    Ok(pattern) => pattern.clone(),
+                    Err(e) => {
+                        eprintln!("Error converting glob to regex: {}", e);
+                        return String::new();
+                    }
+                };
+            }
+        }
 
-        megaignore.push_str(&format!(
-            "# {}\n{}{}{}{}:{}\n",
-            self.raw_line, exclude, target, relative, "G", self.pattern
-        ));
-
-        megaignore
+        format!(
+            "# from {}\n{}{}{}{}:{}\n",
+            self.git_rule, exclude, target, relative, strategy, pattern
+        )
     }
 }
 
+fn pattern_needs_regexp(pattern: &str) -> bool {
+    let mut chars = pattern.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        match c {
+            '[' | ']' => return true, // Character sets
+            '*' => {
+                if chars.peek() == Some(&'*') {
+                    chars.next(); // Consume the second '*'
+                    if chars.peek() == Some(&'/') {
+                        return true; // '**/' detected
+                    }
+                }
+            }
+            '\\' => {
+                return true; // Escaped character
+            }
+            _ => continue,
+        }
+    }
+    false
+}
+
+/// Converts a glob pattern to a regex pattern
+fn glob_to_regex(glob: &str) -> Result<String, Box<dyn Error>> {
+    let mut regex_pattern = String::new();
+    let mut chars = glob.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                // Escape the next character literally
+                if let Some(next) = chars.next() {
+                    regex_pattern.push('\\');
+                    regex_pattern.push(next);
+                } else {
+                    return Err("Trailing backslash in glob pattern".into());
+                }
+            }
+            '*' => {
+                if chars.peek() == Some(&'*') {
+                    chars.next(); // Consume the second '*'
+                    if chars.peek() == Some(&'/') {
+                        // pattern: **/
+                        chars.next(); // Consume the '/'
+                        regex_pattern.push_str(".*"); // Match any directories
+                    } else {
+                        // pattern: **
+                        regex_pattern.push_str(".*");
+                    }
+                } else {
+                    // pattern: *
+                    regex_pattern.push_str("[^/]*"); // Match within a single directory
+                }
+            }
+            '?' => regex_pattern.push('.'), // Match any single character
+            '[' => {
+                regex_pattern.push('[');
+                while let Some(inner) = chars.next() {
+                    regex_pattern.push(inner);
+                    if inner == ']' {
+                        break;
+                    }
+                }
+            }
+            '!' => {
+                // Gitignore negation should be handled externally
+                return Err("Negation patterns ('!') are not directly supported".into());
+            }
+            '.' | '+' | '(' | ')' | '^' | '$' | '|' | '{' | '}' => {
+                // Escape regex metacharacters
+                regex_pattern.push('\\');
+                regex_pattern.push(c);
+            }
+            '/' => regex_pattern.push('/'), // Directory separator
+            _ => regex_pattern.push(c),
+        }
+    }
+    Ok(format!("^{}$", regex_pattern)) // Anchor regex to match the whole path
+}
+
 fn main() {
+    const VERSION: &str = env!("CARGO_PKG_VERSION");
+    const PKG_NAME: &str = env!("CARGO_PKG_NAME");
+    const REPO_URL: Option<&str> = option_env!("CARGO_PKG_REPOSITORY");
     let current_dir = std::env::current_dir().unwrap_or("Current directory not found".into());
 
     // Read the .gitignore file
     if let Ok(lines) = read_lines(".gitignore") {
         let mut megaignore = String::new();
 
-        megaignore.push_str("# Start of generated .megaignore using git2megaignore\n");
-        megaignore.push_str("+sync:.megaignore\n");
+        megaignore.push_str(
+            format!(
+                "# Start of generated .megaignore using {} v{}\n",
+                PKG_NAME, VERSION
+            )
+            .as_str(),
+        );
+        if let Some(repo_url) = REPO_URL {
+            megaignore.push_str(format!("# For more info visit: {}\n", repo_url).as_str());
+        }
+
+        megaignore.push_str("\n+sync:.megaignore\n");
 
         for line in lines {
             if let Ok(line) = line {
@@ -342,7 +477,7 @@ fn main() {
                         megaignore.push_str(&format!("# {}\n", line));
                     }
                 } else {
-                    let rule = GitIgnoreRule::from_line(&line);
+                    let rule = IgnoreRule::from_line(&line);
                     megaignore.push_str(&rule.to_megaignore());
                 }
             }

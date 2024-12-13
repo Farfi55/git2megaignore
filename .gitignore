@@ -19,3 +19,5 @@ Cargo.lock
 
 # End of https://www.toptal.com/developers/gitignore/api/rust
 
+# testing ground for git2megaignore
+playground
