@@ -1,0 +1,5 @@
+*.txt
+foo/
+/[Bb]uild/
+src/**/index.js
+!src/index.js

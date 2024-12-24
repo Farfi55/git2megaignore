@@ -1,0 +1,9 @@
+# Start of generated .megaignore using git2megaignore v0.3.0
+# For more info visit: https://github.com/Farfi55/git2megaignore.git
+
+-nG:*.txt
+-dnG:foo
+-dpR:^[Bb]uild$
+-pR:^src/(.*/)?index\.js$
++pG:src/index.js
+# End of generated .megaignore
