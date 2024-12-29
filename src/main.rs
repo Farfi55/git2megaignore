@@ -26,9 +26,7 @@
 /// -dpR:^[Bb]uild$
 /// ```
 use clap::Parser;
-use env_logger;
 use log::{error, info, warn, LevelFilter};
-
 use std::error::Error;
 use std::fs::File;
 use std::io::{self, BufRead, Write};
@@ -54,7 +52,7 @@ struct Config {
     #[clap(short = 'e', long)]
     no_extras: bool,
 
-    /// Force the use of the Regex STRATEGY for all rules, even if the glob pattern does not require it
+    /// Force the use of the RegEx STRATEGY for all rules, even if the glob pattern does not require it
     #[clap(short = 'x', long)]
     force_regexp: bool,
 
@@ -143,7 +141,7 @@ impl IgnoreRule {
         // if the line starts with a ! then it is an include rule
         if git_rule.starts_with("!") {
             is_exclude = false;
-            glob_pattern = git_rule[1..].trim().to_string();
+            glob_pattern = git_rule.strip_prefix("!").unwrap().trim().to_string();
         } else {
             glob_pattern = git_rule.trim().to_string();
         }
@@ -188,7 +186,7 @@ impl IgnoreRule {
             strategy,
         };
 
-        rule.mega_rule = rule.to_megaignore(&config);
+        rule.mega_rule = rule.to_megaignore(config);
         rule
     }
 
@@ -342,13 +340,13 @@ fn glob_to_regex(glob: &str) -> Result<String, Box<dyn Error>> {
             }
             '?' => regex_pattern.push_str("[^/]"), // Match any single character but not a directory separator
             '[' => {
+                // put [...] into the regex pattern as is
                 regex_pattern.push('[');
-                while let Some(inner) = chars.next() {
+                for inner in chars.by_ref().take_while(|c| *c != ']') {
+                    print!("{}", inner);
                     regex_pattern.push(inner);
-                    if inner == ']' {
-                        break;
-                    }
                 }
+                regex_pattern.push(']');
             }
             '!' => {
                 // Gitignore negation should be handled externally
@@ -387,17 +385,14 @@ fn get_input_lines(config: &Config) -> Vec<String> {
         stdin
             .lock()
             .lines()
-            .filter_map(|line| line.ok())
+            .map_while(Result::ok)
             .collect::<Vec<String>>()
     } else {
         let input_file_name = config.input.as_deref().unwrap_or(".gitignore");
         let path = path::Path::new(&config.directory).join(input_file_name);
         info!("Reading .gitignore rules from file: {}", path.display());
         match read_lines(&path) {
-            Ok(lines) => {
-                let lines = lines.filter_map(|line| line.ok()).collect();
-                lines
-            }
+            Ok(lines) => lines.map_while(Result::ok).collect(),
             Err(e) => {
                 error!("Error reading file \"{}\": {}", path.display(), e);
                 std::process::exit(1);
@@ -423,7 +418,7 @@ fn get_header() -> String {
     if let Some(repo_url) = repo_url {
         header.push_str(format!("# For more info visit: {repo_url}\n").as_str());
     }
-    header.push_str("\n");
+    header.push('\n');
     header
 }
 
@@ -467,7 +462,7 @@ fn main() {
             }
 
             if line.is_empty() {
-                megaignore.push_str("\n");
+                megaignore.push('\n');
             } else {
                 megaignore.push_str(&format!("# {}\n", line));
             }
