@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v0.4.0 - 2025-07-31
+
+Minor update with a new command line argument to copy `.gitignore` lines as comments in the `.megaignore` file.
+And a small fix to the way comments are added to the `.megaignore` file.
+
+### Added
+
+Added `-C` or `--comments` command line argument to copy `.gitignore` lines as comments in the `.megaignore` file.
+Much like the `-c` or `--copy` argument, but it does not copy the rules themselves, only the comments and empty lines.s
+
+### Changed
+
+When copying `.gitignore` lines as comments, the `#` character is no longer added to the beginning of the line, as that was adding a unnecessary comment character to the `.megaignore` file.
+
+
 ## v0.3.1 - 2024-12-28
 
 Minor update with a few bug fixes, refactoring and documentation improvements.

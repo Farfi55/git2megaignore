@@ -48,6 +48,10 @@ struct Config {
     #[clap(short = 'c', long = "copy")]
     copy_gitignore_lines: bool,
 
+    /// same as `-c`, `--copy`, but .gitignore rules will not be copied.
+    #[clap(short = 'C', long = "comments")]
+    copy_gitignore_comments: bool,
+
     /// the header and footer will not be added to the .megaignore file
     #[clap(short = 'e', long)]
     no_extras: bool,
@@ -457,14 +461,14 @@ fn main() {
 
     for line in lines {
         if is_not_gitignore_rule(&line) {
-            if !config.copy_gitignore_lines {
+            if !config.copy_gitignore_lines && !config.copy_gitignore_comments {
                 continue;
             }
 
             if line.is_empty() {
                 megaignore.push('\n');
             } else {
-                megaignore.push_str(&format!("# {}\n", line));
+                megaignore.push_str(&format!("{}\n", line));
             }
         } else {
             let rule = IgnoreRule::from_line(&line, &config);
