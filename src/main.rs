@@ -311,6 +311,9 @@ fn pattern_needs_regexp(pattern: &str) -> bool {
 ///
 /// let regex = glob_to_regex("foo/**/bar").unwrap();
 /// assert_eq!(regex, r"^foo/.*?/bar$");
+/// 
+/// let regex = glob_to_regex("foo\ bar").unwrap();
+/// assert_eq!(regex, r"^foo bar$");
 /// ```
 fn glob_to_regex(glob: &str) -> Result<String, Box<dyn Error>> {
     let mut regex_pattern = String::new();
@@ -320,8 +323,13 @@ fn glob_to_regex(glob: &str) -> Result<String, Box<dyn Error>> {
             '\\' => {
                 // Escape the next character literally
                 if let Some(next) = chars.next() {
-                    regex_pattern.push('\\');
-                    regex_pattern.push(next);
+                    if next == ' ' {
+                        // Handle backslash-space: just put a space in the regex 
+                        regex_pattern.push(' ');
+                    } else {
+                        regex_pattern.push('\\');
+                        regex_pattern.push(next);
+                    }
                 } else {
                     return Err("Trailing backslash in glob pattern".into());
                 }
@@ -347,7 +355,6 @@ fn glob_to_regex(glob: &str) -> Result<String, Box<dyn Error>> {
                 // put [...] into the regex pattern as is
                 regex_pattern.push('[');
                 for inner in chars.by_ref().take_while(|c| *c != ']') {
-                    print!("{}", inner);
                     regex_pattern.push(inner);
                 }
                 regex_pattern.push(']');
@@ -533,5 +540,8 @@ mod tests {
 
         let regex = glob_to_regex("foo/**/bar").unwrap();
         assert_eq!(regex, r"^foo/(.*/)?bar$");
+
+        let regex = glob_to_regex("foo\\ bar").unwrap();
+        assert_eq!(regex, r"^foo bar$");
     }
 }

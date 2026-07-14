@@ -1,4 +1,4 @@
-# Start of generated .megaignore using git2megaignore v0.3.0
+# Start of generated .megaignore using git2megaignore v0.4.1
 # For more info visit: https://github.com/Farfi55/git2megaignore.git
 
 -nG:*.txt
@@ -6,4 +6,5 @@
 -dpR:^[Bb]uild$
 -pR:^src/(.*/)?index\.js$
 +pG:src/index.js
+-nR:^mega ignore$
 # End of generated .megaignore

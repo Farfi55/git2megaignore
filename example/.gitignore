@@ -3,3 +3,4 @@ foo/
 /[Bb]uild/
 src/**/index.js
 !src/index.js
+mega\ ignore
