@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v0.4.1 - 2026-07-15
+
+### Fixed
+
+- Solved [#2](https://github.com/Farfi55/git2megaignore/issues/2) by a better handling of backslash-space patterns in regex.
+- removed a print statement which caused gibberish to be printed to the console
+
+
 ## v0.4.0 - 2025-07-31
 
 Minor update with a new command line argument to copy `.gitignore` lines as comments in the `.megaignore` file.
