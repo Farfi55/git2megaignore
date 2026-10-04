@@ -1,0 +1,128 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and release (e.g. v0.4.1)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  BIN: git2megaignore
+  TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Check tag matches Cargo.toml version
+        run: |
+          version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          if [ "v$version" != "$TAG" ]; then
+            echo "::error::Tag $TAG does not match Cargo.toml version $version"
+            exit 1
+          fi
+
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          # Section between "## $TAG" and the next "## " heading, minus the heading line
+          awk -v tag="$TAG" '
+            /^## / { if (found) exit; if (index($0, "## " tag) == 1) { found = 1; next } }
+            found
+          ' CHANGELOG.md > notes.md
+          printf '\nfull changelog available [here](https://github.com/%s/blob/main/CHANGELOG.md)\n' \
+            "$GITHUB_REPOSITORY" >> notes.md
+          cat notes.md
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "Release $TAG already exists, assets will be added to it"
+          else
+            gh release create "$TAG" --draft --verify-tag --title "$TAG" --notes-file notes.md
+          fi
+
+  build:
+    needs: create-release
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu,   os: ubuntu-latest,  cross: false }
+          - { target: x86_64-unknown-linux-musl,  os: ubuntu-latest,  cross: true }
+          - { target: aarch64-unknown-linux-gnu,  os: ubuntu-latest,  cross: true }
+          - { target: aarch64-unknown-linux-musl, os: ubuntu-latest,  cross: true }
+          - { target: x86_64-pc-windows-gnu,      os: ubuntu-latest,  cross: true }
+          - { target: x86_64-pc-windows-msvc,     os: windows-latest, cross: false }
+          - { target: x86_64-apple-darwin,        os: macos-latest,   cross: false }
+          - { target: aarch64-apple-darwin,       os: macos-latest,   cross: false }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.cross
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - name: Build
+        shell: bash
+        run: |
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cross build --release --locked --target ${{ matrix.target }}
+          else
+            cargo build --release --locked --target ${{ matrix.target }}
+          fi
+
+      - name: Package
+        shell: bash
+        run: |
+          target=${{ matrix.target }}
+          name="$BIN-$target-$TAG"
+          exe="$BIN"
+          [[ "$target" == *windows* ]] && exe="$BIN.exe"
+
+          mkdir -p "dist/$BIN"
+          cp "target/$target/release/$exe" README.md CHANGELOG.md LICENCE "dist/$BIN/"
+          cd dist
+          if [[ "$target" == *windows* ]]; then
+            7z a -tzip "$name.zip" "$BIN" > /dev/null
+            echo "ASSET=dist/$name.zip" >> "$GITHUB_ENV"
+          else
+            tar -czf "$name.tar.gz" "$BIN"
+            echo "ASSET=dist/$name.tar.gz" >> "$GITHUB_ENV"
+          fi
+
+      - name: Upload to release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" "$ASSET" --clobber
+
+  publish-release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
